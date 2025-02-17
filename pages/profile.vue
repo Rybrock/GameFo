@@ -26,7 +26,7 @@ onMounted(() => {
 
 const newUsername = ref(user.value ? user.value.username : ''); // Initialize with current username or empty
 const profileImage = ref(null); // Store the selected profile image
-const profileImageUrl = ref(user.value?.photoURL); // Retrieve the existing photo URL if available
+const profileImageUrl = ref(user.value?.photoURL || '/default-avatar.png'); // Display existing image or default
 
 // Handle the username update
 const updateUsername = async () => {
