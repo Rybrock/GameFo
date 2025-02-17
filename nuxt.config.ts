@@ -22,4 +22,10 @@ export default defineNuxtConfig({
     }
   },
   plugins: ['~/plugins/pinia.js', '~/plugins/toast.js'],
+  nitro: {
+    firebase: {
+      gen: 2,
+      nodeVersion: "22" 
+    }
+  }
 })

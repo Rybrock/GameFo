@@ -16,7 +16,7 @@ onMounted(() => {
 
 // Create a computed property for the username (reactive to Pinia state)
 const username = computed(() => userStore.user?.username || null);
-
+console.log(username)
 // Watch for changes in the store and update localStorage
 watch(username, (newUsername) => {
   if (newUsername) {

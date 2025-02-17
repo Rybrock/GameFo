@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted } from 'vue';
-import { useUserStore } from '@/store/user';
+import { useUserStore } from '@/store/user'; // Pinia store to get user data
 import { getAuth, updateProfile } from 'firebase/auth';
-import { getFirestore, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { getFirestore, doc, updateDoc } from 'firebase/firestore'; // Import updateDoc
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage'; // Firebase storage imports
 import { useToast } from 'vue-toastification';
 import { useRouter } from 'vue-router';
 import { useNuxtApp } from '#app';
@@ -15,43 +15,84 @@ const { $auth } = useNuxtApp();
 const userStore = useUserStore();
 const user = ref(userStore.user);
 
-const newUsername = ref(user.value ? user.value.username : '');
-const profileImage = ref(null);
-const profileImageUrl = ref(user.value?.photoURL || '/default-avatar.png');
-const userDocId = ref(null); // Store Firestore document ID
-
-// Load user data when component mounts
-onMounted(async () => {
-  const auth = getAuth();
-  if (!auth.currentUser) return;
-
-  // Set profile image if exists in Firebase Auth
-  if (auth.currentUser?.photoURL) {
-    profileImageUrl.value = auth.currentUser.photoURL;
-  }
-
-  // Fetch Firestore user document
-  const db = getFirestore();
-  const userQueryRef = doc(db, 'users', auth.currentUser.uid);
-  const userDoc = await getDoc(userQueryRef);
-
-  if (userDoc.exists()) {
-    userDocId.value = userDoc.id; // Store correct Firestore document ID
-    const userData = userDoc.data();
-    newUsername.value = userData.username || '';
-    profileImageUrl.value = userData.photoURL || '/default-avatar.png';
+// Retrieve user data from localStorage if it exists
+onMounted(() => {
+  const storedUser = localStorage.getItem('user');
+  if (storedUser) {
+    userStore.setUser(JSON.parse(storedUser)); // Set user data in Pinia store if it exists in localStorage
+    user.value = userStore.user; // Ensure the ref gets updated with the user data from Pinia
   }
 });
 
-// Handle file selection
-const handleFileChange = (event) => {
-  const file = event.target.files[0];
-  if (file) {
-    profileImage.value = file;
+const newUsername = ref(user.value ? user.value.username : ''); // Initialize with current username or empty
+const profileImage = ref(null); // Store the selected profile image
+const profileImageUrl = ref(user.value?.photoURL); // Retrieve the existing photo URL if available
+
+// Handle the username update
+const updateUsername = async () => {
+  console.log("Updating username...");
+
+  // Check if user is not available
+  if (!user.value) {
+    toast.error('User not found. Please log in again.');
+    console.log("User is not available.");
+    return;
+  }
+
+  // Validate the new username
+  if (!newUsername.value || newUsername.value.trim() === '') {
+    toast.error('Username cannot be empty');
+    console.log("Username is empty.");
+    return;
+  }
+
+  try {
+    const auth = getAuth();
+    const db = getFirestore();
+
+    // Check if the user is logged in
+    if (!auth.currentUser) {
+      throw new Error('User not authenticated');
+    }
+
+    console.log("Updating Firebase Authentication...");
+    // Update the username in Firebase Authentication
+    await updateProfile(auth.currentUser, { displayName: newUsername.value });
+
+    console.log("Updating Firestore...");
+    // Reference the user document using `uid` as the document ID
+    const userRef = doc(db, 'users', user.value.uid);
+
+    // Update the user document in Firestore
+    await updateDoc(userRef, {
+      username: newUsername.value,
+    });
+
+    console.log("Updating Pinia store...");
+    // Update the Pinia store with the new username
+    userStore.setUser({ ...user.value, username: newUsername.value });
+
+    // ✅ **Update localStorage to keep data consistent**
+    localStorage.setItem('user', JSON.stringify(userStore.user));
+
+    // Show a success toast
+    toast.success('Username updated successfully!');
+    console.log("Username updated successfully!");
+  } catch (error) {
+    toast.error('Failed to update username');
+    console.error(error);
   }
 };
 
-// Upload profile image
+// Handle file selection for profile image
+const handleFileChange = (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    profileImage.value = file; // Store the selected file
+  }
+};
+
+// Upload profile image to Firebase Storage
 const uploadImage = async () => {
   if (!profileImage.value) {
     toast.error('Please select an image first');
@@ -63,8 +104,8 @@ const uploadImage = async () => {
     const storage = getStorage();
     const db = getFirestore();
 
-    if (!auth.currentUser || !userDocId.value) {
-      throw new Error('User not authenticated or Firestore document ID missing');
+    if (!auth.currentUser) {
+      throw new Error('User not authenticated');
     }
 
     const fileRef = storageRef(storage, `profile_images/${auth.currentUser.uid}`);
@@ -81,60 +122,28 @@ const uploadImage = async () => {
         toast.error('Failed to upload image');
       },
       async () => {
-        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref); // Corrected this part
         profileImageUrl.value = downloadURL; // Update the displayed image immediately
 
+        // Update Firebase Authentication profile image
         await updateProfile(auth.currentUser, { photoURL: downloadURL });
 
-        const userRef = doc(db, 'users', userDocId.value);
+        // Update Firestore with the image URL
+        const userRef = doc(db, 'users', user.value.uid);
         await updateDoc(userRef, { photoURL: downloadURL });
 
+        // Update Pinia store with the new photoURL
         userStore.setUser({ ...user.value, photoURL: downloadURL });
 
         // Update localStorage to keep data consistent
         localStorage.setItem('user', JSON.stringify(userStore.user));
 
-        toast.success('Profile image updated successfully!');
+        toast.success('Profile image uploaded successfully!');
       }
     );
   } catch (error) {
     console.error(error);
     toast.error('An error occurred while uploading the image.');
-  }
-};
-
-// Update username and sync everywhere
-const updateUsername = async () => {
-  if (!newUsername.value.trim()) {
-    toast.error('Username cannot be empty');
-    return;
-  }
-
-  try {
-    const auth = getAuth();
-    const db = getFirestore();
-
-    if (!auth.currentUser || !userDocId.value) {
-      throw new Error('User not authenticated or Firestore document ID missing');
-    }
-
-    // Update Firebase Authentication username
-    await updateProfile(auth.currentUser, { displayName: newUsername.value });
-
-    // Update Firestore username
-    const userRef = doc(db, 'users', userDocId.value);
-    await updateDoc(userRef, { username: newUsername.value });
-
-    // Update the Pinia store immediately
-    userStore.setUser({ ...user.value, username: newUsername.value });
-
-    // ✅ **Update localStorage to keep data consistent**
-    localStorage.setItem('user', JSON.stringify(userStore.user));
-
-    toast.success('Username updated successfully!');
-  } catch (error) {
-    console.error(error);
-    toast.error('Failed to update username.');
   }
 };
 </script>
@@ -146,7 +155,7 @@ const updateUsername = async () => {
         Profile for {{ user?.username || 'User' }}
       </h1>
 
-      <!-- Profile Image -->
+      <!-- Profile Image Section -->
       <div class="flex flex-col items-center mb-4">
         <img
           :src="profileImageUrl"
